@@ -1,70 +1,85 @@
 use anyhow::Result;
-use clap::{clap_app, crate_version};
+use clap::{AppSettings, Clap};
 
 mod config;
 mod gitlab;
 mod repo;
 
+#[derive(Clap, Debug)]
+#[clap(author, about, version)]
+#[clap(global_setting = AppSettings::ColoredHelp)]
+#[clap(setting = AppSettings::DeriveDisplayOrder)]
+#[clap(setting = AppSettings::SubcommandRequiredElseHelp)]
+struct Opts {
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Clap, Debug)]
+enum Command {
+    /// Read and modify locally saved repositories
+    Repo(Repo),
+    /// Run a script using the locally installed bash shell
+    Run(Script),
+    /// Import a script and prints it to stdout
+    Import(Script),
+}
+
+#[derive(Clap, Debug)]
+struct Script {
+    /// Script identifier in the format `<repo>:<script_path>`
+    script: String,
+}
+
+#[derive(Clap, Debug)]
+struct Repo {
+    #[clap(subcommand)]
+    command: RepoCommand,
+}
+
+#[derive(Clap, Debug)]
+enum RepoCommand {
+    /// List all locally saved repositories
+    List,
+    /// Add a repository to the local repository list
+    Add {
+        /// Local alias for the repository to add
+        name: String,
+        /// URI of the repository to add
+        uri: String,
+
+        /// Username for the repository (if required)
+        #[clap(long, short)]
+        username: Option<String>,
+        /// Password or token for the repository (if required)
+        #[clap(long, short)]
+        password: Option<String>,
+        /// Reads the password from the given environment variable when the repo is used
+        #[clap(long)]
+        password_env: Option<String>,
+        /// Reads the password or token from stdin
+        #[clap(long)]
+        password_stdin: bool,
+    },
+    /// Check whether a repository is accessible and prints out details about the repository
+    Check {
+        /// Local alias for the repository to check
+        name: String,
+    },
+    /// Remove a repository from the local repository list
+    Remove {
+        /// Local alias for the repository to remove
+        name: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let app = clap_app!(rem =>
-        (version: crate_version!())
-        (author: "Hilmar Wiegand <me@hwgnd.de>")
-        (about: "Remote bash script execution and library import")
-        (@setting DeriveDisplayOrder)
-        (@setting ColoredHelp)
-        (@setting SubcommandRequiredElseHelp)
+    let opts = Opts::parse();
+    let config = config::load_config().await?;
 
-        (@subcommand repo =>
-            (about: "Read and modify locally saved repositories")
-            (@setting DeriveDisplayOrder)
-            (@setting ColoredHelp)
-            (@setting SubcommandRequiredElseHelp)
-
-            (@subcommand list =>
-                (about: "Lists all locally saved repositories")
-                (@setting ColoredHelp)
-            )
-
-            (@subcommand add =>
-                (about: "Adds a repository to the local repository list")
-                (@setting ColoredHelp)
-                (@arg NAME: +required "Local alias for the repository to add")
-                (@arg URI: +required "URI of the repository to add")
-                (@arg username: -u --username [USERNAME] "Username for the repository (if required)")
-                (@arg password: -p --password [PASSWORD] "Password or token for the repository (if required)")
-                (@arg password_env: --("password-env") [VAR_NAME] "Reads the password from the given var on access")
-                (@arg password_stdin: --("password-stdin") "Reads the password or token from stdin")
-            )
-
-            (@subcommand check =>
-                (about: "Checks whether a repository is accessible and prints out details about the repository")
-                (@setting ColoredHelp)
-                (@arg NAME: +required "Local alias for the repository to add")
-            )
-
-            (@subcommand remove =>
-                (about: "Removes a repository from the local repository list")
-                (@setting ColoredHelp)
-                (@arg NAME: +required "Local alias for the repository to remove")
-            )
-        )
-
-        (@subcommand import =>
-            (about: "Imports a script and prints it to stdout")
-            (@setting ColoredHelp)
-            (@arg SCRIPT: +required "Script identifier in the format `<repo>:<script_path>`")
-        )
-
-        (@subcommand run =>
-            (about: "Runs a script using the locally installed bash shell")
-            (@setting ColoredHelp)
-            (@arg SCRIPT: +required "Script identifier in the format `<repo>:<script_path>`")
-        )
-    );
-
-    let _config = config::load_config().await?;
-    let _args = app.get_matches();
+    println!("config: {:#?}", config);
+    println!("opts: {:#?}", opts);
 
     Ok(())
 }

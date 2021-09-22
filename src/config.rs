@@ -8,6 +8,8 @@ use toml::toml;
 pub struct Config {
     require_bash_extension: bool,
     require_lib_extension: bool,
+
+    #[serde(default)]
     repo: HashMap<String, crate::repo::GenericRepo>,
 }
 

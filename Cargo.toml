@@ -2,6 +2,8 @@
 name = "rem"
 version = "0.1.0"
 edition = "2018"
+author = "Hilmar Wiegand <me@hwgnd.de>"
+description = "Remote bash script execution and library import"
 
 [dependencies]
 reqwest = { version = "0.11", features = ["json"] }
