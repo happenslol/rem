@@ -1,17 +1,9 @@
-use std::{io::{self, Write}, env, process::Command};
 use anyhow::Result;
-use serde::Deserialize;
-use clap::{crate_version, clap_app};
+use clap::{clap_app, crate_version};
 
-const SHELL_NAME: &'static str = "rem";
-
-#[derive(Debug, Deserialize)]
-struct GitlabFileResponse {
-    file_name: String,
-    file_path: String,
-    size: u64,
-    content: String,
-}
+mod config;
+mod gitlab;
+mod repo;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,7 +33,8 @@ async fn main() -> Result<()> {
                 (@arg URI: +required "URI of the repository to add")
                 (@arg username: -u --username [USERNAME] "Username for the repository (if required)")
                 (@arg password: -p --password [PASSWORD] "Password or token for the repository (if required)")
-                (@arg password_stdin: -i --("password-stdin") "Reads the password or token from stdin")
+                (@arg password_env: --("password-env") [VAR_NAME] "Reads the password from the given var on access")
+                (@arg password_stdin: --("password-stdin") "Reads the password or token from stdin")
             )
 
             (@subcommand check =>
@@ -70,71 +63,8 @@ async fn main() -> Result<()> {
         )
     );
 
-    let args = app.get_matches();
-    match args.subcommand() {
-        ("repo", Some(args)) => match args.subcommand() {
-            ("list", Some(_)) => cmd_repo_list(),
-            ("add", Some(args)) => cmd_repo_add(),
-            ("check", Some(args)) => cmd_repo_check(),
-            ("remove", Some(args)) => cmd_repo_remove(),
-            _ => unreachable!(),
-        },
-        ("import", Some(args)) => cmd_import().await?,
-        ("run", Some(args)) => cmd_run().await?,
-        _ => unreachable!(),
-    }
+    let _config = config::load_config().await?;
+    let _args = app.get_matches();
 
-    Ok(())
-}
-
-fn cmd_repo_list() {}
-
-fn cmd_repo_add() {}
-
-fn cmd_repo_check() {}
-
-fn cmd_repo_remove() {}
-
-async fn cmd_import() -> Result<()> {
-    let gitlab_token = env::var("GITLAB_TOKEN").expect("No GitLab token found");
-    let script_url = "https://gitlab.com/api/v4/projects/0000/repository/files/helloworld%2Ebash?ref=main";
-    let resp = reqwest::Client::new()
-        .get(script_url)
-        .header("PRIVATE-TOKEN", gitlab_token)
-        .send().await?
-        .json::<GitlabFileResponse>().await?;
-
-    let decoded_content = base64::decode(resp.content)?;
-    let decoded_content = String::from_utf8(decoded_content)?;
-    import_script(&decoded_content)
-}
-
-async fn cmd_run() -> Result<()> {
-    let gitlab_token = env::var("GITLAB_TOKEN").expect("No GitLab token found");
-    let script_url = "https://gitlab.com/api/v4/projects/0000/repository/files/helloworld%2Ebash?ref=main";
-    let resp = reqwest::Client::new()
-        .get(script_url)
-        .header("PRIVATE-TOKEN", gitlab_token)
-        .send().await?
-        .json::<GitlabFileResponse>().await?;
-
-    let decoded_content = base64::decode(resp.content)?;
-    let decoded_content = String::from_utf8(decoded_content)?;
-    run_script(&decoded_content, vec![])
-}
-
-fn run_script(script: &str, script_args: Vec<&str>) -> Result<()> {
-    let mut cmd = Command::new("bash");
-    let mut args = vec!["-c", script, SHELL_NAME];
-    args.extend_from_slice(&script_args);
-
-    cmd.args(&args);
-    let _child = cmd.spawn()?;
-
-    Ok(())
-}
-
-fn import_script(script: &str) -> Result<()> {
-    io::stdout().write_all(script.as_bytes())?;
     Ok(())
 }
