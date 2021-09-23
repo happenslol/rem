@@ -2,7 +2,7 @@
 name = "rem"
 version = "0.1.0"
 edition = "2018"
-author = "Hilmar Wiegand <me@hwgnd.de>"
+authors = ["Hilmar Wiegand <me@hwgnd.de>"]
 description = "Remote bash script execution and library import"
 
 [dependencies]
@@ -16,3 +16,5 @@ async-trait = "0.1"
 clap = "3.0.0-beta.4"
 toml = "0.5"
 dirs = "1.0"
+url = "2.2"
+urlencoding = "2.1"

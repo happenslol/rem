@@ -6,11 +6,11 @@ use toml::toml;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
-    require_bash_extension: bool,
-    require_lib_extension: bool,
+    pub require_bash_extension: bool,
+    pub require_lib_extension: bool,
 
     #[serde(default)]
-    repo: HashMap<String, crate::repo::GenericRepo>,
+    pub repo: HashMap<String, crate::repo::GenericRepo>,
 }
 
 fn get_default_config() -> Config {
@@ -39,9 +39,9 @@ pub async fn load_config() -> Result<Config> {
     Ok(toml::from_str(&config_str)?)
 }
 
-pub async fn save_config(config: Config) -> Result<()> {
+pub async fn save_config(config: &Config) -> Result<()> {
     let path = get_config_path()?;
-    let config_str = toml::to_string(&config)?;
+    let config_str = toml::to_string(config)?;
     fs::write(path, &config_str).await?;
 
     Ok(())
