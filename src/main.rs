@@ -47,6 +47,7 @@ struct Repo {
 #[derive(Clap, Debug)]
 enum RepoCommand {
     /// List all locally saved repositories
+    #[clap(alias = "ls")]
     List,
     /// Add a repository to the local repository list
     Add {
@@ -74,6 +75,7 @@ enum RepoCommand {
         name: String,
     },
     /// Remove a repository from the local repository list
+    #[clap(alias = "rm")]
     Remove {
         /// Local alias for the repository to remove
         name: String,
@@ -92,7 +94,12 @@ async fn main() -> Result<()> {
 
     match Opts::parse().command {
         Command::Repo(repo) => match repo.command {
-            RepoCommand::List => println!("Listing repos"),
+            RepoCommand::List => {
+                println!("Saved repositories:");
+                for (k, v) in config.repo {
+                    println!("    {} ({}:{})", k, v.provider, v.uri);
+                }
+            }
             RepoCommand::Add {
                 name,
                 uri,
@@ -121,8 +128,16 @@ async fn main() -> Result<()> {
                 println!("Repo `{}` was successfully added", &name);
                 save_config(&config).await?;
             }
-            RepoCommand::Check { .. } => {}
-            RepoCommand::Remove { .. } => {}
+            RepoCommand::Check { .. } => unimplemented!(),
+            RepoCommand::Remove { name } => {
+                if !config.repo.contains_key(&name) {
+                    bail!("Repo `{}` was not found", &name);
+                }
+
+                config.repo.remove(&name);
+                save_config(&config).await?;
+                println!("Repo `{}` was removed", &name);
+            }
         },
         Command::Run(script) => {
             let contents = get_script_contents(&config, &script.script).await?;
