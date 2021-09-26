@@ -5,6 +5,7 @@ edition = "2018"
 authors = ["Hilmar Wiegand <me@hwgnd.de>"]
 description = "Remote bash script execution and library import"
 default-run = "rem"
+license = "MIT"
 
 [[bin]]
 name = "rem"
