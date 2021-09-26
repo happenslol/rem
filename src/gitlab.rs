@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -9,14 +7,24 @@ use std::{
 };
 use url::Url;
 
-use crate::repo::{GenericRepo, Repo};
+use crate::{
+    repo::{GenericRepo, Repo},
+    Password,
+};
+
+pub const PROVIDER: &'static str = "gitlab";
 
 #[derive(Debug, Deserialize)]
 struct GitlabFileResponse {
     content: String,
 }
 
-struct GitlabRepo {
+#[derive(Debug, Deserialize)]
+struct GitlabRepoResponse {
+    id: u32,
+}
+
+pub struct GitlabRepo {
     project_id: String,
     token: Option<GitlabToken>,
 }
@@ -29,23 +37,36 @@ enum GitlabToken {
 #[async_trait]
 impl Repo for GitlabRepo {
     fn id() -> &'static str {
-        "gitlab"
+        PROVIDER
     }
 
     async fn get(&self, path: &str) -> Result<String> {
         let script_url = format!(
-            "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref=main",
+            "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref=HEAD",
             self.project_id, path,
         );
 
         let req = reqwest::Client::new().get(script_url);
-        let req = match &self.token {
-            Some(GitlabToken::Saved(saved)) => req.header("PRIVATE-TOKEN", saved),
-            Some(GitlabToken::FromEnv(var)) => req.header("PRIVATE-TOKEN", env::var(var)?),
+        let token = match &self.token {
+            Some(GitlabToken::Saved(saved)) => Some(saved.clone()),
+            Some(GitlabToken::FromEnv(var)) => Some(env::var(var)?),
+            None => None,
+        };
+
+        let req = match token {
+            Some(token) => req.header("PRIVATE-TOKEN", token),
             _ => req,
         };
 
-        let resp = req.send().await?.json::<GitlabFileResponse>().await?;
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            bail!(
+                "Got error response from gitlab: {}",
+                resp.json::<serde_json::Value>().await?
+            );
+        }
+
+        let resp = resp.json::<GitlabFileResponse>().await?;
         let decoded_content = base64::decode(resp.content)?;
         Ok(String::from_utf8(decoded_content)?)
     }
@@ -86,26 +107,36 @@ impl TryFrom<GenericRepo> for GitlabRepo {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct GitlabRepoResponse {
-    id: u32,
-}
-
-pub async fn fetch_project(uri: &Url, token: Option<String>) -> Result<GenericRepo> {
+pub async fn fetch_project(uri: &Url, token: Password) -> Result<GenericRepo> {
     let without_leading_slash = uri.path().trim_start_matches('/');
     let encoded_uri = urlencoding::encode(without_leading_slash);
     let repo_url = format!("https://gitlab.com/api/v4/projects/{}", encoded_uri);
     let req = reqwest::Client::new().get(repo_url);
 
-    let req = match token {
-        Some(token) => req.header("PRIVATE-TOKEN", token),
-        _ => req,
+    let (req, token_to_save) = match token {
+        Password::Saved(token) => (
+            req.header("PRIVATE-TOKEN", token.clone()),
+            Some(GitlabToken::Saved(token)),
+        ),
+        Password::FromEnv(var, token) => (
+            req.header("PRIVATE-TOKEN", token),
+            Some(GitlabToken::FromEnv(var)),
+        ),
+        _ => (req, None),
     };
 
-    let resp = req.send().await?.json::<GitlabRepoResponse>().await?;
+    let resp = req.send().await?;
+    if !resp.status().is_success() {
+        bail!(
+            "Got error response from gitlab: {}",
+            resp.json::<serde_json::Value>().await?
+        );
+    }
+
+    let resp = resp.json::<GitlabRepoResponse>().await?;
     let result = GitlabRepo {
         project_id: format!("{}", resp.id),
-        token: None, // TODO
+        token: token_to_save,
     };
 
     Ok(result.into())

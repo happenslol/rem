@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{AppSettings, Clap};
 use std::{
     env,
@@ -6,7 +6,7 @@ use std::{
 };
 use url::Url;
 
-use crate::config::save_config;
+use crate::{config::save_config, repo::Repo as _};
 
 mod config;
 mod gitlab;
@@ -34,7 +34,7 @@ enum Command {
 
 #[derive(Clap, Debug)]
 struct Script {
-    /// Script identifier in the format `<repo>[@version]:<script_path>`
+    /// Script identifier in the format `<repo>[@ref]:<script_path>`
     script: String,
 }
 
@@ -80,10 +80,15 @@ enum RepoCommand {
     },
 }
 
+pub enum Password {
+    Saved(String),
+    FromEnv(String, String),
+    None,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config = config::load_config().await?;
-    // println!("config: {:#?}", config);
 
     match Opts::parse().command {
         Command::Repo(repo) => match repo.command {
@@ -101,34 +106,66 @@ async fn main() -> Result<()> {
                 }
 
                 let password_for_parse = match (password, password_env, password_stdin) {
-                    (Some(pass), _, _) => Some(pass),
-                    (_, Some(var), _) => Some(env::var(var)?),
+                    (Some(pass), _, _) => Password::Saved(pass),
+                    (_, Some(var), _) => Password::FromEnv(var.clone(), env::var(var)?),
                     (_, _, true) => {
                         let mut buf = String::new();
                         io::stdin().read_to_string(&mut buf)?;
-                        Some(buf)
+                        Password::Saved(buf)
                     }
-                    _ => None,
+                    _ => Password::None,
                 };
 
                 let repo = get_repo(&uri, username, password_for_parse).await?;
-                config.repo.insert(name, repo);
+                config.repo.insert(name.clone(), repo);
+                println!("Repo `{}` was successfully added", &name);
                 save_config(&config).await?;
             }
             RepoCommand::Check { .. } => {}
             RepoCommand::Remove { .. } => {}
         },
-        Command::Run(_script) => {}
-        Command::Import(_script) => {}
+        Command::Run(script) => {
+            let contents = get_script_contents(&config, &script.script).await?;
+            repo::run_script(&contents, vec![])?;
+        }
+        Command::Import(script) => {
+            let contents = get_script_contents(&config, &script.script).await?;
+            repo::import_script(&contents)?;
+        }
     };
 
     Ok(())
 }
 
+async fn get_script_contents(config: &config::Config, script: &str) -> Result<String> {
+    let parts = script.split(":").collect::<Vec<&str>>();
+    if parts.len() != 2 {
+        bail!("Script must be in the format `<repo>[@ref]:<script_path>`");
+    }
+
+    let repo_name = parts[0].to_string();
+    let script_name = parts[1].to_string();
+
+    // TODO: Check optional ref
+
+    let generic_repo = config
+        .repo
+        .get(&repo_name)
+        .ok_or(anyhow!("Repo `{}` was not found", &repo_name))?
+        .clone();
+
+    // TODO: Check script name for lib/bash extensions
+
+    let repo = generic_repo.into_repo()?;
+    let script_contents = repo.get(&script_name).await?;
+
+    Ok(script_contents)
+}
+
 async fn get_repo(
     uri: &str,
     _username: Option<String>,
-    password: Option<String>,
+    password: Password,
 ) -> Result<repo::GenericRepo> {
     let mut maybe_parsed: Option<Url> = None;
 

@@ -1,14 +1,16 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
+    convert::TryInto,
     io::{self, Write},
     process::Command,
 };
+use crate::gitlab::{self, GitlabRepo};
 
 const SHELL_NAME: &'static str = "rem";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GenericRepo {
     pub provider: String,
     pub uri: String,
@@ -21,6 +23,18 @@ pub struct GenericRepo {
 pub trait Repo {
     fn id() -> &'static str;
     async fn get(&self, path: &str) -> Result<String>;
+}
+
+impl GenericRepo {
+    pub fn into_repo(self) -> Result<impl Repo> {
+        match self.provider.as_str() {
+            gitlab::PROVIDER => {
+                let gitlab_repo: GitlabRepo = self.try_into()?;
+                Ok(gitlab_repo)
+            },
+            _ => bail!("Unknown provider: `{}`", &self.provider)
+        }
+    }
 }
 
 pub fn run_script(script: &str, script_args: Vec<&str>) -> Result<()> {
