@@ -163,10 +163,10 @@ async fn get_script_contents(config: &config::Config, script: &str) -> Result<St
     let repo_name = parts[0].to_string();
     let script_name = parts[1].to_string();
 
-    let repo_parts = script.split("@").collect::<Vec<&str>>();
+    let repo_parts = repo_name.split('@').collect::<Vec<&str>>();
     let (repo_name, repo_ref) = match repo_parts.len() {
         1 => (repo_name, "HEAD".to_string()),
-        2 => (parts[0].to_string(), parts[1].to_string()),
+        2 => (repo_parts[0].to_string(), repo_parts[1].to_string()),
         _ => bail!("Invalid repo: `{}`", repo_name),
     };
 
