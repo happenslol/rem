@@ -752,7 +752,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rem"
+name = "rem-bash"
 version = "0.1.0"
 dependencies = [
  "anyhow",
