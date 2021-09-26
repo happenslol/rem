@@ -22,7 +22,7 @@ pub struct GenericRepo {
 #[async_trait]
 pub trait Repo {
     fn id() -> &'static str;
-    async fn get(&self, path: &str) -> Result<String>;
+    async fn get(&self, path: &str, repo_ref: &str) -> Result<String>;
 }
 
 impl GenericRepo {

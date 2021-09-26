@@ -146,7 +146,12 @@ async fn get_script_contents(config: &config::Config, script: &str) -> Result<St
     let repo_name = parts[0].to_string();
     let script_name = parts[1].to_string();
 
-    // TODO: Check optional ref
+    let repo_parts = script.split("@").collect::<Vec<&str>>();
+    let (repo_name, repo_ref) = match repo_parts.len() {
+        1 => (repo_name, "HEAD".to_string()),
+        2 => (parts[0].to_string(), parts[1].to_string()),
+        _ => bail!("Invalid repo: `{}`", repo_name),
+    };
 
     let generic_repo = config
         .repo
@@ -157,7 +162,7 @@ async fn get_script_contents(config: &config::Config, script: &str) -> Result<St
     // TODO: Check script name for lib/bash extensions
 
     let repo = generic_repo.into_repo()?;
-    let script_contents = repo.get(&script_name).await?;
+    let script_contents = repo.get(&script_name, &repo_ref).await?;
 
     Ok(script_contents)
 }

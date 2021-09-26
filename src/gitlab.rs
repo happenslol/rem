@@ -40,10 +40,10 @@ impl Repo for GitlabRepo {
         PROVIDER
     }
 
-    async fn get(&self, path: &str) -> Result<String> {
+    async fn get(&self, path: &str, repo_ref: &str) -> Result<String> {
         let script_url = format!(
-            "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref=HEAD",
-            self.project_id, path,
+            "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref={}",
+            self.project_id, path, repo_ref,
         );
 
         let req = reqwest::Client::new().get(script_url);
