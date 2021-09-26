@@ -1,4 +1,8 @@
-use anyhow::{Result, bail};
+use crate::{
+    github::{self, GithubRepo},
+    gitlab::{self, GitlabRepo},
+};
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -6,7 +10,6 @@ use std::{
     io::{self, Write},
     process::Command,
 };
-use crate::gitlab::{self, GitlabRepo};
 
 const SHELL_NAME: &'static str = "rem";
 
@@ -26,13 +29,17 @@ pub trait Repo {
 }
 
 impl GenericRepo {
-    pub fn into_repo(self) -> Result<impl Repo> {
+    pub async fn get_contents(self, script_name: &str, repo_ref: &str) -> Result<String> {
         match self.provider.as_str() {
             gitlab::PROVIDER => {
                 let gitlab_repo: GitlabRepo = self.try_into()?;
-                Ok(gitlab_repo)
-            },
-            _ => bail!("Unknown provider: `{}`", &self.provider)
+                Ok(gitlab_repo.get(script_name, repo_ref).await?)
+            }
+            github::PROVIDER => {
+                let github_repo: GithubRepo = self.try_into()?;
+                Ok(github_repo.get(script_name, repo_ref).await?)
+            }
+            _ => bail!("Unknown provider: `{}`", &self.provider),
         }
     }
 }

@@ -6,10 +6,11 @@ use std::{
 };
 use url::Url;
 
-use crate::{config::save_config, repo::Repo as _};
+use crate::config::save_config;
 
 mod config;
 mod gitlab;
+mod github;
 mod repo;
 
 #[derive(Clap, Debug)]
@@ -82,6 +83,7 @@ enum RepoCommand {
     },
 }
 
+#[derive(PartialEq)]
 pub enum Password {
     Saved(String),
     FromEnv(String, String),
@@ -176,15 +178,12 @@ async fn get_script_contents(config: &config::Config, script: &str) -> Result<St
 
     // TODO: Check script name for lib/bash extensions
 
-    let repo = generic_repo.into_repo()?;
-    let script_contents = repo.get(&script_name, &repo_ref).await?;
-
-    Ok(script_contents)
+    Ok(generic_repo.get_contents(&script_name, &repo_ref).await?)
 }
 
 async fn get_repo(
     uri: &str,
-    _username: Option<String>,
+    username: Option<String>,
     password: Password,
 ) -> Result<repo::GenericRepo> {
     let mut maybe_parsed: Option<Url> = None;
@@ -210,6 +209,7 @@ async fn get_repo(
 
     match parsed.host_str() {
         Some("gitlab.com") => Ok(gitlab::fetch_project(&parsed, password).await?),
+        Some("github.com") => Ok(github::fetch_project(&parsed, username, password).await?),
         Some(_) => bail!("No provider recognized for passed URI"),
         None => bail!("No host on passed URI"),
     }
