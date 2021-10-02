@@ -6,11 +6,11 @@ use std::{
 };
 use url::Url;
 
-use crate::config::save_config;
+use crate::config::{save_config, Config};
 
 mod config;
-mod gitlab;
 mod github;
+mod gitlab;
 mod repo;
 
 #[derive(Clap, Debug)]
@@ -35,7 +35,15 @@ enum Command {
 
 #[derive(Clap, Debug)]
 struct Script {
-    /// Script identifier in the format `<repo>[@ref]:<script_path>`
+    /// Script identifier for a script from a repository
+    ///
+    ///     For saved repos: `<repo>[@ref]:<script_path>`
+    ///         Example: `myscripts:hello.bash`
+    ///         Example (w/ ref): `myscripts@v1.0:hello.bash`
+    ///
+    ///     For git repos: `git@<repo_url>[@ref]:<script_path>`
+    ///         Example: `git@github.com:user/myscripts:hello.bash`
+    ///         Example (w/ ref): `git@github.com:user/myscripts@main:hello.bash`
     script: String,
 }
 
@@ -142,11 +150,13 @@ async fn main() -> Result<()> {
             }
         },
         Command::Run(script) => {
-            let contents = get_script_contents(&config, &script.script).await?;
+            let src = parse_script_source(&config, &script.script, ScriptAction::Run)?;
+            let contents = get_script_contents(&config, &src).await?;
             repo::run_script(&contents, vec![])?;
         }
         Command::Import(script) => {
-            let contents = get_script_contents(&config, &script.script).await?;
+            let src = parse_script_source(&config, &script.script, ScriptAction::Import)?;
+            let contents = get_script_contents(&config, &src).await?;
             repo::import_script(&contents)?;
         }
     };
@@ -154,7 +164,37 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn get_script_contents(config: &config::Config, script: &str) -> Result<String> {
+enum ScriptSource {
+    Repo(String, String, String),
+    Git(String, String, String),
+}
+
+enum ScriptAction {
+    Run,
+    Import,
+}
+
+fn parse_script_source(
+    config: &Config,
+    script: &str,
+    action: ScriptAction,
+) -> Result<ScriptSource> {
+    if script.starts_with("git@") {
+        let (repo, name, rref) = parse_git_source(script)?;
+        validate_script_name(config, &name, action)?;
+        Ok(ScriptSource::Git(repo, name, rref))
+    } else {
+        let (repo, name, rref) = parse_repo_source(script)?;
+        validate_script_name(config, &name, action)?;
+        Ok(ScriptSource::Repo(repo, name, rref))
+    }
+}
+
+fn parse_git_source(_script: &str) -> Result<(String, String, String)> {
+    unimplemented!()
+}
+
+fn parse_repo_source(script: &str) -> Result<(String, String, String)> {
     let parts = script.split(":").collect::<Vec<&str>>();
     if parts.len() != 2 {
         bail!("Script must be in the format `<repo>[@ref]:<script_path>`");
@@ -170,15 +210,46 @@ async fn get_script_contents(config: &config::Config, script: &str) -> Result<St
         _ => bail!("Invalid repo: `{}`", repo_name),
     };
 
-    let generic_repo = config
-        .repo
-        .get(&repo_name)
-        .ok_or(anyhow!("Repo `{}` was not found", &repo_name))?
-        .clone();
+    Ok((repo_name, script_name, repo_ref))
+}
 
-    // TODO: Check script name for lib/bash extensions
+fn validate_script_name(config: &Config, name: &str, action: ScriptAction) -> Result<()> {
+    match (
+        &config.require_bash_extension,
+        &config.require_lib_extension,
+        action,
+    ) {
+        (Some(ref ext), _, ScriptAction::Run) => {
+            if !name.ends_with(ext) {
+                bail!("Expected executable bash script to end with {}", ext);
+            }
 
-    Ok(generic_repo.get_contents(&script_name, &repo_ref).await?)
+            Ok(())
+        }
+        (_, Some(ext), ScriptAction::Import) => {
+            if !name.ends_with(ext) {
+                bail!("Expected bash library to end with {}", ext);
+            }
+
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn get_script_contents(config: &config::Config, src: &ScriptSource) -> Result<String> {
+    match src {
+        ScriptSource::Repo(repo, name, rref) => {
+            let generic_repo = config
+                .repo
+                .get(repo)
+                .ok_or(anyhow!("Repo `{}` was not found", &repo))?
+                .clone();
+
+            Ok(generic_repo.get_contents(&name, &rref).await?)
+        }
+        _ => unimplemented!(),
+    }
 }
 
 async fn get_repo(
