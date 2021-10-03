@@ -1,8 +1,9 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Error, Result};
 use clap::{AppSettings, Clap};
 use std::{
     env,
     io::{self, Read},
+    str::FromStr,
 };
 use url::Url;
 
@@ -28,7 +29,7 @@ enum Command {
     /// Read and modify locally saved repositories
     Repo(Repo),
     /// Run a script using the locally installed bash shell
-    Run(Script),
+    Run { script: Script, args: Vec<String> },
     /// Import a script and prints it to stdout
     Import(Script),
 }
@@ -45,6 +46,16 @@ struct Script {
     ///         Example: `git@github.com:user/myscripts:hello.bash`
     ///         Example (w/ ref): `git@github.com:user/myscripts@main:hello.bash`
     script: String,
+}
+
+impl FromStr for Script {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Script {
+            script: s.to_owned(),
+        })
+    }
 }
 
 #[derive(Clap, Debug)]
@@ -149,10 +160,11 @@ async fn main() -> Result<()> {
                 println!("Repo `{}` was removed", &name);
             }
         },
-        Command::Run(script) => {
+        Command::Run { script, args } => {
             let src = parse_script_source(&config, &script.script, ScriptAction::Run)?;
             let contents = get_script_contents(&config, &src).await?;
-            repo::run_script(&contents, vec![])?;
+            let args = args.iter().map(|s| &**s).collect();
+            repo::run_script(&contents, args)?;
         }
         Command::Import(script) => {
             let src = parse_script_source(&config, &script.script, ScriptAction::Import)?;
@@ -221,14 +233,14 @@ fn validate_script_name(config: &Config, name: &str, action: ScriptAction) -> Re
     ) {
         (Some(ref ext), _, ScriptAction::Run) => {
             if !name.ends_with(ext) {
-                bail!("Expected executable bash script to end with {}", ext);
+                bail!("Expected executable bash script to end with `{}`", ext);
             }
 
             Ok(())
         }
         (_, Some(ext), ScriptAction::Import) => {
             if !name.ends_with(ext) {
-                bail!("Expected bash library to end with {}", ext);
+                bail!("Expected bash library to end with `{}`", ext);
             }
 
             Ok(())

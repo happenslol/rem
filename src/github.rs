@@ -46,7 +46,8 @@ impl Repo for GithubRepo {
             self.project_id, path, repo_ref,
         );
 
-        let req = reqwest::Client::new().get(script_url)
+        let req = reqwest::Client::new()
+            .get(script_url)
             .header("Accept", "application/vnd.github.v3+json")
             .header("User-Agent", "rem-bash");
 
@@ -76,9 +77,13 @@ impl Repo for GithubRepo {
         }
 
         let resp = resp.json::<GithubFileResponse>().await?;
-        let content = reqwest::Client::new().get(&resp.download_url)
+        let content = reqwest::Client::new()
+            .get(&resp.download_url)
             .header("User-Agent", "rem-bash")
-            .send().await?.text().await?;
+            .send()
+            .await?
+            .text()
+            .await?;
 
         Ok(content)
     }
@@ -107,17 +112,18 @@ impl TryFrom<GenericRepo> for GithubRepo {
     fn try_from(repo: GenericRepo) -> Result<Self> {
         let auth = if let Some(username) = repo.username {
             let password = match (repo.password, repo.password_env) {
-                (Some(_), Some(_)) => bail!("Github repo cannot have both passsword and password_env"),
+                (Some(_), Some(_)) => {
+                    bail!("Github repo cannot have both passsword and password_env")
+                }
                 (Some(saved), None) => GithubPassword::Saved(saved),
                 (None, Some(var)) => GithubPassword::FromEnv(var),
                 _ => bail!("Github repo must have password if there is a username"),
             };
 
-            Some(GithubAuth {
-                username,
-                password,
-            })
-        } else { None };
+            Some(GithubAuth { username, password })
+        } else {
+            None
+        };
 
         Ok(Self {
             project_id: repo.uri,
@@ -126,10 +132,15 @@ impl TryFrom<GenericRepo> for GithubRepo {
     }
 }
 
-pub async fn fetch_project(uri: &Url, username: Option<String>, password: Password) -> Result<GenericRepo> {
+pub async fn fetch_project(
+    uri: &Url,
+    username: Option<String>,
+    password: Password,
+) -> Result<GenericRepo> {
     let without_leading_slash = uri.path().trim_start_matches('/');
     let repo_url = format!("https://api.github.com/repos/{}", without_leading_slash);
-    let req = reqwest::Client::new().get(repo_url)
+    let req = reqwest::Client::new()
+        .get(repo_url)
         .header("Accept", "application/vnd.github.v3+json")
         .header("User-Agent", "rem-bash");
 
@@ -151,10 +162,7 @@ pub async fn fetch_project(uri: &Url, username: Option<String>, password: Passwo
 
     let resp = req.send().await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got error response from github: {}",
-            resp.text().await?
-        );
+        bail!("Got error response from github: {}", resp.text().await?);
     }
 
     let auth = username.map(|username| GithubAuth {
