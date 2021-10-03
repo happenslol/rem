@@ -1,10 +1,7 @@
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{AppSettings, Clap};
-use std::{
-    env,
-    io::{self, Read},
-    str::FromStr,
-};
+use std::env;
+use std::io::{self, Read};
 use url::Url;
 
 use crate::config::{save_config, Config};
@@ -24,38 +21,42 @@ struct Opts {
     command: Command,
 }
 
+const SCRIPT_HELP: &'static str = r"Script identifier for a script from a repository
+
+    For saved repos: `<repo>[@ref]:<script_path>`
+        Example: `myscripts:hello.bash`
+        Example (w/ ref): `myscripts@v1.0:hello.bash`
+
+    For git repos: `git@<repo_url>[@ref]:<script_path>`
+        Example: `git@github.com:user/myscripts:hello.bash`
+        Example (w/ ref): `git@github.com:user/myscripts@main:hello.bash`
+";
+
 #[derive(Clap, Debug)]
 enum Command {
     /// Read and modify locally saved repositories
     Repo(Repo),
     /// Run a script using the locally installed bash shell
-    Run { script: Script, args: Vec<String> },
+    Run {
+        #[clap(about = "Script to run")]
+        #[clap(long_about = SCRIPT_HELP)]
+        script: String,
+        /// Args to be passed to the script
+        #[clap(about = "Args to be passed to the script")]
+        args: Vec<String>,
+    },
     /// Import a script and prints it to stdout
-    Import(Script),
+    Import {
+        #[clap(about = "Script to import")]
+        #[clap(long_about = SCRIPT_HELP)]
+        script: String,
+    },
 }
 
 #[derive(Clap, Debug)]
 struct Script {
-    /// Script identifier for a script from a repository
-    ///
-    ///     For saved repos: `<repo>[@ref]:<script_path>`
-    ///         Example: `myscripts:hello.bash`
-    ///         Example (w/ ref): `myscripts@v1.0:hello.bash`
-    ///
-    ///     For git repos: `git@<repo_url>[@ref]:<script_path>`
-    ///         Example: `git@github.com:user/myscripts:hello.bash`
-    ///         Example (w/ ref): `git@github.com:user/myscripts@main:hello.bash`
+    #[clap(long_about = SCRIPT_HELP)]
     script: String,
-}
-
-impl FromStr for Script {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Script {
-            script: s.to_owned(),
-        })
-    }
 }
 
 #[derive(Clap, Debug)]
@@ -161,13 +162,13 @@ async fn main() -> Result<()> {
             }
         },
         Command::Run { script, args } => {
-            let src = parse_script_source(&config, &script.script, ScriptAction::Run)?;
+            let src = parse_script_source(&config, &script, ScriptAction::Run)?;
             let contents = get_script_contents(&config, &src).await?;
             let args = args.iter().map(|s| &**s).collect();
             repo::run_script(&contents, args)?;
         }
-        Command::Import(script) => {
-            let src = parse_script_source(&config, &script.script, ScriptAction::Import)?;
+        Command::Import { script } => {
+            let src = parse_script_source(&config, &script, ScriptAction::Import)?;
             let contents = get_script_contents(&config, &src).await?;
             repo::import_script(&contents)?;
         }
