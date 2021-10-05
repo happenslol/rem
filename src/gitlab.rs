@@ -1,16 +1,10 @@
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use serde::Deserialize;
-use std::{
-    convert::{From, TryFrom},
-    env,
-};
+use serde::{Deserialize, Serialize};
+use std::env;
 use url::Url;
 
-use crate::{
-    repo::{GenericRepo, Repo},
-    Password,
-};
+use crate::{repo::Repo, Password};
 
 pub const PROVIDER: &'static str = "gitlab";
 
@@ -24,23 +18,31 @@ struct GitlabRepoResponse {
     id: u32,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct GitlabRepo {
     project_id: String,
     token: Option<GitlabToken>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "token_type", content = "token")]
 enum GitlabToken {
     Saved(String),
     FromEnv(String),
 }
 
 #[async_trait]
+#[typetag::serde]
 impl Repo for GitlabRepo {
-    fn id() -> &'static str {
+    fn provider(&self) -> &'static str {
         PROVIDER
     }
 
-    async fn get(&self, path: &str, repo_ref: &str) -> Result<String> {
+    fn uri(&self) -> &str {
+        &self.project_id
+    }
+
+    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
         let script_url = format!(
             "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref={}",
             self.project_id, path, repo_ref,
@@ -72,42 +74,7 @@ impl Repo for GitlabRepo {
     }
 }
 
-impl From<GitlabRepo> for GenericRepo {
-    fn from(gitlab_repo: GitlabRepo) -> Self {
-        let (password, password_env) = match gitlab_repo.token {
-            Some(GitlabToken::Saved(saved)) => (Some(saved), None),
-            Some(GitlabToken::FromEnv(var)) => (None, Some(var)),
-            _ => (None, None),
-        };
-
-        GenericRepo {
-            provider: GitlabRepo::id().to_string(),
-            uri: gitlab_repo.project_id,
-            username: None,
-            password,
-            password_env,
-        }
-    }
-}
-
-impl TryFrom<GenericRepo> for GitlabRepo {
-    type Error = anyhow::Error;
-    fn try_from(repo: GenericRepo) -> Result<Self> {
-        let token = match (repo.password, repo.password_env) {
-            (Some(_), Some(_)) => bail!("Gitlab repo cannot have both passsword and password_env"),
-            (Some(saved), None) => Some(GitlabToken::Saved(saved)),
-            (None, Some(var)) => Some(GitlabToken::FromEnv(var)),
-            _ => None,
-        };
-
-        Ok(Self {
-            project_id: repo.uri,
-            token,
-        })
-    }
-}
-
-pub async fn fetch_project(uri: &Url, token: Password) -> Result<GenericRepo> {
+pub async fn fetch_project(uri: &Url, token: Password) -> Result<Box<dyn Repo>> {
     let without_leading_slash = uri.path().trim_start_matches('/');
     let encoded_uri = urlencoding::encode(without_leading_slash);
     let repo_url = format!("https://gitlab.com/api/v4/projects/{}", encoded_uri);
@@ -139,5 +106,5 @@ pub async fn fetch_project(uri: &Url, token: Password) -> Result<GenericRepo> {
         token: token_to_save,
     };
 
-    Ok(result.into())
+    Ok(Box::new(result))
 }

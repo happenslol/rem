@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Result};
+use crate::repo::Repo;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::BTreeMap as Map, path::PathBuf};
 use tokio::fs;
 
 #[derive(Default, Debug, Deserialize, Serialize)]
@@ -9,7 +10,7 @@ pub struct Config {
     pub require_lib_extension: Option<String>,
 
     #[serde(default)]
-    pub repo: HashMap<String, crate::repo::GenericRepo>,
+    pub repo: Map<String, Box<dyn Repo>>,
 }
 
 fn get_config_path() -> Result<PathBuf> {
@@ -31,7 +32,7 @@ pub async fn load_config() -> Result<Config> {
 
 pub async fn save_config(config: &Config) -> Result<()> {
     let path = get_config_path()?;
-    let config_str = toml::to_string(config)?;
+    let config_str = toml::to_string(config).context("Failed to serialize config")?;
     fs::write(path, &config_str).await?;
 
     Ok(())

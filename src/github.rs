@@ -1,16 +1,10 @@
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use serde::Deserialize;
-use std::{
-    convert::{From, TryFrom},
-    env,
-};
+use serde::{Deserialize, Serialize};
+use std::env;
 use url::Url;
 
-use crate::{
-    repo::{GenericRepo, Repo},
-    Password,
-};
+use crate::{repo::Repo, Password};
 
 #[derive(Debug, Deserialize)]
 struct GithubFileResponse {
@@ -19,28 +13,37 @@ struct GithubFileResponse {
 
 pub const PROVIDER: &'static str = "github";
 
+#[derive(Serialize, Deserialize)]
 pub struct GithubRepo {
     project_id: String,
     auth: Option<GithubAuth>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "password_type", content = "password")]
 enum GithubPassword {
     Saved(String),
     FromEnv(String),
 }
 
+#[derive(Serialize, Deserialize)]
 struct GithubAuth {
     username: String,
     password: GithubPassword,
 }
 
 #[async_trait]
+#[typetag::serde]
 impl Repo for GithubRepo {
-    fn id() -> &'static str {
+    fn provider(&self) -> &'static str {
         PROVIDER
     }
 
-    async fn get(&self, path: &str, repo_ref: &str) -> Result<String> {
+    fn uri(&self) -> &str {
+        todo!()
+    }
+
+    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
         let script_url = format!(
             "https://api.github.com/repos/{}/contents/{}?ref={}",
             self.project_id, path, repo_ref,
@@ -89,54 +92,11 @@ impl Repo for GithubRepo {
     }
 }
 
-impl From<GithubRepo> for GenericRepo {
-    fn from(github_repo: GithubRepo) -> Self {
-        let (password, password_env) = match github_repo.auth.as_ref().map(|it| &it.password) {
-            Some(GithubPassword::Saved(saved)) => (Some(saved), None),
-            Some(GithubPassword::FromEnv(var)) => (None, Some(var)),
-            _ => (None, None),
-        };
-
-        GenericRepo {
-            provider: GithubRepo::id().to_string(),
-            uri: github_repo.project_id,
-            username: github_repo.auth.as_ref().map(|it| it.username.to_owned()),
-            password: password.map(|it| it.to_owned()),
-            password_env: password_env.map(|it| it.to_owned()),
-        }
-    }
-}
-
-impl TryFrom<GenericRepo> for GithubRepo {
-    type Error = anyhow::Error;
-    fn try_from(repo: GenericRepo) -> Result<Self> {
-        let auth = if let Some(username) = repo.username {
-            let password = match (repo.password, repo.password_env) {
-                (Some(_), Some(_)) => {
-                    bail!("Github repo cannot have both passsword and password_env")
-                }
-                (Some(saved), None) => GithubPassword::Saved(saved),
-                (None, Some(var)) => GithubPassword::FromEnv(var),
-                _ => bail!("Github repo must have password if there is a username"),
-            };
-
-            Some(GithubAuth { username, password })
-        } else {
-            None
-        };
-
-        Ok(Self {
-            project_id: repo.uri,
-            auth,
-        })
-    }
-}
-
 pub async fn fetch_project(
     uri: &Url,
     username: Option<String>,
     password: Password,
-) -> Result<GenericRepo> {
+) -> Result<Box<dyn Repo>> {
     let without_leading_slash = uri.path().trim_start_matches('/');
     let repo_url = format!("https://api.github.com/repos/{}", without_leading_slash);
     let req = reqwest::Client::new()
@@ -175,5 +135,5 @@ pub async fn fetch_project(
         auth,
     };
 
-    Ok(result.into())
+    Ok(Box::new(result))
 }

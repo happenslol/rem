@@ -1,46 +1,24 @@
-use crate::{
-    github::{self, GithubRepo},
-    gitlab::{self, GitlabRepo},
-};
-use anyhow::{bail, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::{
-    convert::TryInto,
+    fmt::Debug,
     io::{self, Write},
     process::Command,
 };
 
 const SHELL_NAME: &'static str = "rem";
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct GenericRepo {
-    pub provider: String,
-    pub uri: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub password_env: Option<String>,
-}
-
 #[async_trait]
+#[typetag::serde(tag = "provider")]
 pub trait Repo {
-    fn id() -> &'static str;
-    async fn get(&self, path: &str, repo_ref: &str) -> Result<String>;
+    fn provider(&self) -> &'static str;
+    fn uri(&self) -> &str;
+    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String>;
 }
 
-impl GenericRepo {
-    pub async fn get_contents(self, script_name: &str, repo_ref: &str) -> Result<String> {
-        match self.provider.as_str() {
-            gitlab::PROVIDER => {
-                let gitlab_repo: GitlabRepo = self.try_into()?;
-                Ok(gitlab_repo.get(script_name, repo_ref).await?)
-            }
-            github::PROVIDER => {
-                let github_repo: GithubRepo = self.try_into()?;
-                Ok(github_repo.get(script_name, repo_ref).await?)
-            }
-            _ => bail!("Unknown provider: `{}`", &self.provider),
-        }
+impl Debug for Box<dyn Repo> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.provider(), self.uri())
     }
 }
 

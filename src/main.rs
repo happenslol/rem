@@ -1,10 +1,12 @@
-use anyhow::{anyhow, bail, Result};
+use crate::{
+    config::{save_config, Config},
+    repo::Repo,
+};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{AppSettings, Clap};
 use std::env;
 use std::io::{self, Read};
 use url::Url;
-
-use crate::config::{save_config, Config};
 
 mod config;
 mod github;
@@ -35,7 +37,10 @@ const SCRIPT_HELP: &'static str = r"Script identifier for a script from a reposi
 #[derive(Clap, Debug)]
 enum Command {
     /// Read and modify locally saved repositories
-    Repo(Repo),
+    Repo {
+        #[clap(subcommand)]
+        command: RepoCommand,
+    },
     /// Run a script using the locally installed bash shell
     Run {
         #[clap(about = "Script to run")]
@@ -57,12 +62,6 @@ enum Command {
 struct Script {
     #[clap(long_about = SCRIPT_HELP)]
     script: String,
-}
-
-#[derive(Clap, Debug)]
-struct Repo {
-    #[clap(subcommand)]
-    command: RepoCommand,
 }
 
 #[derive(Clap, Debug)]
@@ -115,11 +114,16 @@ async fn main() -> Result<()> {
     let mut config = config::load_config().await?;
 
     match Opts::parse().command {
-        Command::Repo(repo) => match repo.command {
+        Command::Repo { command } => match command {
             RepoCommand::List => {
+                if config.repo.is_empty() {
+                    println!("No Saved repositories.");
+                    return Ok(());
+                }
+
                 println!("Saved repositories:");
                 for (k, v) in config.repo {
-                    println!("    {} ({}:{})", k, v.provider, v.uri);
+                    println!("    {} ({}:{})", k, v.provider(), v.uri());
                 }
             }
             RepoCommand::Add {
@@ -147,8 +151,11 @@ async fn main() -> Result<()> {
 
                 let repo = get_repo(&uri, username, password_for_parse).await?;
                 config.repo.insert(name.clone(), repo);
+                save_config(&config)
+                    .await
+                    .context("Failed to save updated config")?;
+
                 println!("Repo `{}` was successfully added", &name);
-                save_config(&config).await?;
             }
             RepoCommand::Check { .. } => unimplemented!(),
             RepoCommand::Remove { name } => {
@@ -157,19 +164,22 @@ async fn main() -> Result<()> {
                 }
 
                 config.repo.remove(&name);
-                save_config(&config).await?;
+                save_config(&config)
+                    .await
+                    .context("Failed to save updated config")?;
+
                 println!("Repo `{}` was removed", &name);
             }
         },
         Command::Run { script, args } => {
             let src = parse_script_source(&config, &script, ScriptAction::Run)?;
-            let contents = get_script_contents(&config, &src).await?;
+            let contents = fetch_script_contents(&config, &src).await?;
             let args = args.iter().map(|s| &**s).collect();
             repo::run_script(&contents, args)?;
         }
         Command::Import { script } => {
             let src = parse_script_source(&config, &script, ScriptAction::Import)?;
-            let contents = get_script_contents(&config, &src).await?;
+            let contents = fetch_script_contents(&config, &src).await?;
             repo::import_script(&contents)?;
         }
     };
@@ -250,7 +260,7 @@ fn validate_script_name(config: &Config, name: &str, action: ScriptAction) -> Re
     }
 }
 
-async fn get_script_contents(config: &config::Config, src: &ScriptSource) -> Result<String> {
+async fn fetch_script_contents(config: &config::Config, src: &ScriptSource) -> Result<String> {
     match src {
         ScriptSource::Repo(repo, name, rref) => {
             let generic_repo = config
@@ -259,7 +269,7 @@ async fn get_script_contents(config: &config::Config, src: &ScriptSource) -> Res
                 .ok_or(anyhow!("Repo `{}` was not found", &repo))?
                 .clone();
 
-            Ok(generic_repo.get_contents(&name, &rref).await?)
+            Ok(generic_repo.fetch_script(&name, &rref).await?)
         }
         _ => unimplemented!(),
     }
@@ -269,7 +279,7 @@ async fn get_repo(
     uri: &str,
     username: Option<String>,
     password: Password,
-) -> Result<repo::GenericRepo> {
+) -> Result<Box<dyn Repo>> {
     let mut maybe_parsed: Option<Url> = None;
 
     // Check if we've been given a raw gitlab or github url without scheme
