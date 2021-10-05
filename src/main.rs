@@ -4,6 +4,8 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{AppSettings, Clap};
+use lazy_static::lazy_static;
+use regex::Regex;
 use std::env;
 use std::io::{self, Read};
 use url::Url;
@@ -12,6 +14,15 @@ mod config;
 mod github;
 mod gitlab;
 mod repo;
+
+lazy_static! {
+    static ref API_SOURCE_REGEX: Regex =
+        Regex::new(r"(?P<alias>^\w+)(@(?P<ref>\w+))?:(?P<script>.+)$").unwrap();
+
+    static ref GIT_SOURCE_REGEX: Regex =
+        Regex::new(r"^(?P<repo>((git|ssh|http(s)?)|(git@[\w\.]+))(:(\/\/)?)([\w\./\-~]+)(\.git)?(\/)?)(@(?P<ref>\w+))?:(?P<script>.+)$")
+            .unwrap();
+}
 
 #[derive(Clap, Debug)]
 #[clap(author, about, version)]
@@ -89,11 +100,6 @@ enum RepoCommand {
         #[clap(long)]
         password_stdin: bool,
     },
-    /// Check whether a repository is accessible and prints out details about the repository
-    Check {
-        /// Local alias for the repository to check
-        name: String,
-    },
     /// Remove a repository from the local repository list
     #[clap(alias = "rm")]
     Remove {
@@ -157,7 +163,6 @@ async fn main() -> Result<()> {
 
                 println!("Repo `{}` was successfully added", &name);
             }
-            RepoCommand::Check { .. } => unimplemented!(),
             RepoCommand::Remove { name } => {
                 if !config.repo.contains_key(&name) {
                     bail!("Repo `{}` was not found", &name);
@@ -172,14 +177,18 @@ async fn main() -> Result<()> {
             }
         },
         Command::Run { script, args } => {
-            let src = parse_script_source(&config, &script, ScriptAction::Run)?;
-            let contents = fetch_script_contents(&config, &src).await?;
+            let src = ScriptSource::parse(&script, ScriptAction::Run)?;
+            src.validate_script_name(&config)?;
+
+            let contents = src.fetch_script_contents(&config).await?;
             let args = args.iter().map(|s| &**s).collect();
             repo::run_script(&contents, args)?;
         }
         Command::Import { script } => {
-            let src = parse_script_source(&config, &script, ScriptAction::Import)?;
-            let contents = fetch_script_contents(&config, &src).await?;
+            let src = ScriptSource::parse(&script, ScriptAction::Import)?;
+            src.validate_script_name(&config)?;
+
+            let contents = src.fetch_script_contents(&config).await?;
             repo::import_script(&contents)?;
         }
     };
@@ -187,91 +196,113 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-enum ScriptSource {
-    Repo(String, String, String),
-    Git(String, String, String),
-}
-
 enum ScriptAction {
     Run,
     Import,
 }
 
-fn parse_script_source(
-    config: &Config,
-    script: &str,
+struct ScriptSource {
+    repo: String,
+    source_type: SourceType,
+    script_name: String,
+    rref: Option<String>,
     action: ScriptAction,
-) -> Result<ScriptSource> {
-    if script.starts_with("git@") {
-        let (repo, name, rref) = parse_git_source(script)?;
-        validate_script_name(config, &name, action)?;
-        Ok(ScriptSource::Git(repo, name, rref))
-    } else {
-        let (repo, name, rref) = parse_repo_source(script)?;
-        validate_script_name(config, &name, action)?;
-        Ok(ScriptSource::Repo(repo, name, rref))
+}
+
+enum SourceType {
+    Git,
+    Api,
+}
+
+impl ScriptSource {
+    fn parse(script: &str, action: ScriptAction) -> Result<ScriptSource> {
+        if let Some(matches) = API_SOURCE_REGEX.captures(script) {
+            let repo = matches
+                .name("alias")
+                .expect("No alias matched")
+                .as_str()
+                .to_owned();
+
+            let script_name = matches
+                .name("script")
+                .expect("No script name matched")
+                .as_str()
+                .to_owned();
+
+            let rref = matches.name("ref").map(|rref| rref.as_str().to_owned());
+
+            return Ok(Self {
+                source_type: SourceType::Api,
+                repo,
+                script_name,
+                rref,
+                action,
+            });
+        }
+
+        if let Some(matches) = GIT_SOURCE_REGEX.captures(script) {
+            let repo = matches
+                .name("repo")
+                .expect("No repo matched")
+                .as_str()
+                .to_owned();
+
+            let script_name = matches
+                .name("script")
+                .expect("No script name matched")
+                .as_str()
+                .to_owned();
+
+            let rref = matches.name("ref").map(|rref| rref.as_str().to_owned());
+
+            return Ok(Self {
+                source_type: SourceType::Git,
+                repo,
+                script_name,
+                rref,
+                action,
+            });
+        }
+
+        bail!("Script source could not be parsed")
     }
-}
 
-fn parse_git_source(_script: &str) -> Result<(String, String, String)> {
-    unimplemented!()
-}
+    fn validate_script_name(&self, config: &Config) -> Result<()> {
+        if config.require_bash_extension.is_none() && config.require_lib_extension.is_none() {
+            return Ok(());
+        }
 
-fn parse_repo_source(script: &str) -> Result<(String, String, String)> {
-    let parts = script.split(":").collect::<Vec<&str>>();
-    if parts.len() != 2 {
-        bail!("Script must be in the format `<repo>[@ref]:<script_path>`");
+        let expected = match (
+            &config.require_bash_extension,
+            &config.require_lib_extension,
+            &self.action,
+        ) {
+            (Some(ref ext), _, &ScriptAction::Run) => ext,
+            (_, Some(ext), &ScriptAction::Import) => ext,
+            _ => unreachable!(),
+        };
+
+        if !self.script_name.ends_with(expected) {
+            bail!("Expected script name to end with `{}`", expected);
+        }
+
+        Ok(())
     }
 
-    let repo_name = parts[0].to_string();
-    let script_name = parts[1].to_string();
+    async fn fetch_script_contents(&self, config: &config::Config) -> Result<String> {
+        match self.source_type {
+            SourceType::Api => {
+                let repo = config
+                    .repo
+                    .get(&self.repo)
+                    .ok_or(anyhow!("Repo `{}` was not found", &self.repo))?
+                    .clone();
 
-    let repo_parts = repo_name.split('@').collect::<Vec<&str>>();
-    let (repo_name, repo_ref) = match repo_parts.len() {
-        1 => (repo_name, "HEAD".to_string()),
-        2 => (repo_parts[0].to_string(), repo_parts[1].to_string()),
-        _ => bail!("Invalid repo: `{}`", repo_name),
-    };
-
-    Ok((repo_name, script_name, repo_ref))
-}
-
-fn validate_script_name(config: &Config, name: &str, action: ScriptAction) -> Result<()> {
-    match (
-        &config.require_bash_extension,
-        &config.require_lib_extension,
-        action,
-    ) {
-        (Some(ref ext), _, ScriptAction::Run) => {
-            if !name.ends_with(ext) {
-                bail!("Expected executable bash script to end with `{}`", ext);
+                let rref = self.rref.clone().unwrap_or("HEAD".to_owned());
+                Ok(repo.fetch_script(&self.script_name, &rref).await?)
             }
-
-            Ok(())
+            _ => unimplemented!(),
         }
-        (_, Some(ext), ScriptAction::Import) => {
-            if !name.ends_with(ext) {
-                bail!("Expected bash library to end with `{}`", ext);
-            }
-
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-async fn fetch_script_contents(config: &config::Config, src: &ScriptSource) -> Result<String> {
-    match src {
-        ScriptSource::Repo(repo, name, rref) => {
-            let generic_repo = config
-                .repo
-                .get(repo)
-                .ok_or(anyhow!("Repo `{}` was not found", &repo))?
-                .clone();
-
-            Ok(generic_repo.fetch_script(&name, &rref).await?)
-        }
-        _ => unimplemented!(),
     }
 }
 
