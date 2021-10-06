@@ -12,13 +12,13 @@ const SHELL_NAME: &'static str = "rem";
 #[typetag::serde(tag = "provider")]
 pub trait Repo {
     fn provider(&self) -> &'static str;
-    fn uri(&self) -> &str;
+    fn readable(&self) -> String;
     async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String>;
 }
 
 impl Debug for Box<dyn Repo> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.provider(), self.uri())
+        write!(f, "{} | {}", self.provider(), self.readable())
     }
 }
 

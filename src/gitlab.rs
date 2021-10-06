@@ -21,6 +21,7 @@ struct GitlabRepoResponse {
 #[derive(Serialize, Deserialize)]
 pub struct GitlabRepo {
     project_id: String,
+    path: String,
     token: Option<GitlabToken>,
 }
 
@@ -38,8 +39,8 @@ impl Repo for GitlabRepo {
         PROVIDER
     }
 
-    fn uri(&self) -> &str {
-        &self.project_id
+    fn readable(&self) -> String {
+        format!("gitlab.com/{}", &self.path)
     }
 
     async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
@@ -104,6 +105,7 @@ pub async fn fetch_project(uri: &Url, token: Password) -> Result<Box<dyn Repo>> 
     let result = GitlabRepo {
         project_id: format!("{}", resp.id),
         token: token_to_save,
+        path: without_leading_slash.to_owned(),
     };
 
     Ok(Box::new(result))

@@ -11,6 +11,7 @@ use std::io::{self, Read};
 use url::Url;
 
 mod config;
+mod git;
 mod github;
 mod gitlab;
 mod repo;
@@ -129,7 +130,7 @@ async fn main() -> Result<()> {
 
                 println!("Saved repositories:");
                 for (k, v) in config.repo {
-                    println!("    {} ({}:{})", k, v.provider(), v.uri());
+                    println!("    {} ({} | {})", k, v.provider(), v.readable());
                 }
             }
             RepoCommand::Add {

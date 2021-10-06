@@ -1,10 +1,9 @@
+use crate::{repo::Repo, Password};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::env;
 use url::Url;
-
-use crate::{repo::Repo, Password};
 
 #[derive(Debug, Deserialize)]
 struct GithubFileResponse {
@@ -39,8 +38,8 @@ impl Repo for GithubRepo {
         PROVIDER
     }
 
-    fn uri(&self) -> &str {
-        todo!()
+    fn readable(&self) -> String {
+        format!("github.com/{}", &self.project_id)
     }
 
     async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
