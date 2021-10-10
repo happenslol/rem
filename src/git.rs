@@ -1,5 +1,5 @@
 use crate::{repo::Repo, ScriptSource};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -74,8 +74,8 @@ mod cmd {
     async fn run_git_command(dir: &Path, args: &[&str]) -> Result<()> {
         let mut child = Command::new("git")
             .current_dir(dir)
-            .stdin(Stdio::piped())
             .stderr(Stdio::piped())
+            .stdin(Stdio::piped())
             .args(args)
             .spawn()?;
 
@@ -86,8 +86,18 @@ mod cmd {
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("git command returned error: {}", stderr);
+            let trimmed = stderr.trim_end();
+            bail!("git: {}", trimmed);
         }
+    }
+
+    pub async fn clone_ref(repo: &str, rref: &str, ref_path: &Path) -> Result<()> {
+        run_git_command(&ref_path, &["init"]).await?;
+        run_git_command(&ref_path, &["remote", "add", "origin", repo]).await?;
+        run_git_command(&ref_path, &["fetch", "--depth", "1", "origin", rref]).await?;
+        run_git_command(&ref_path, &["checkout", "FETCH_HEAD"]).await?;
+
+        Ok(())
     }
 
     pub async fn fetch_script(
@@ -101,18 +111,22 @@ mod cmd {
             fs::remove_dir_all(&ref_path).await?;
         }
 
-        let is_clean = ref_path.is_dir()
-            && run_git_command(&ref_path, &["diff", "--quiet"])
-                .await
-                .is_ok();
+        {
+            let is_clean_fut = run_git_command(&ref_path, &["diff", "--quiet"]);
+            let is_clean = ref_path.is_dir() && is_clean_fut.await.is_ok();
 
-        if !is_clean {
-            println!("cloning");
-            fs::create_dir_all(&ref_path).await?;
-            run_git_command(&ref_path, &["init"]).await?;
-            run_git_command(&ref_path, &["remote", "add", "origin", repo]).await?;
-            run_git_command(&ref_path, &["fetch", "--depth", "1", "origin", rref]).await?;
-            run_git_command(&ref_path, &["checkout", "FETCH_HEAD"]).await?;
+            if !is_clean {
+                fs::create_dir_all(&ref_path)
+                    .await
+                    .context("Failed to create ref dir")?;
+
+                let clone_result = clone_ref(repo, rref, &ref_path).await;
+
+                if !clone_result.is_ok() {
+                    fs::remove_dir_all(&ref_path).await?;
+                    clone_result.context("Failed to clone repo")?;
+                }
+            }
         }
 
         ref_path.push(path);
