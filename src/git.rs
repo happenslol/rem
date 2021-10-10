@@ -1,9 +1,9 @@
-use crate::repo::Repo;
-use anyhow::{anyhow, Result};
+use crate::{repo::Repo, ScriptSource};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GitRepo {
     url: String,
 }
@@ -21,25 +21,31 @@ impl Repo for GitRepo {
         format!("{}", self.url)
     }
 
-    async fn fetch_script(&self, path: &str, repo_ref: &str) -> anyhow::Result<String> {
-        todo!()
+    fn box_clone(&self) -> Box<dyn Repo> {
+        Box::new(self.clone())
+    }
+
+    async fn fetch_script(&self, path: &str, rref: &str) -> Result<String> {
+        Ok(cmd::fetch_script(&self.url, rref, path, false).await?)
     }
 }
 
-impl GitRepo {}
-
-pub async fn fetch_project() -> Result<Box<dyn Repo>> {
-    todo!()
+impl GitRepo {
+    pub fn from_src(src: &ScriptSource) -> Box<dyn Repo> {
+        Box::new(Self {
+            url: src.repo.clone(),
+        })
+    }
 }
 
 mod cmd {
-    use anyhow::{anyhow, Context, Result};
-    use async_process::{Command, ExitStatus, Stdio};
+    use anyhow::{anyhow, bail, Context, Result};
+    use async_process::{Command, Stdio};
     use sanitize_filename::{sanitize_with_options, Options as SanitizeOptions};
     use std::path::{Path, PathBuf};
-    use tokio::{fs, io::BufReader};
+    use tokio::fs;
 
-    async fn get_ref_dir(repo: String, rref: String) -> Result<PathBuf> {
+    async fn get_ref_dir(repo: &str, rref: &str) -> Result<PathBuf> {
         let mut cache_dir = dirs::cache_dir().ok_or(anyhow!("Failed to get cache dir"))?;
         cache_dir.push("rem");
         if !cache_dir.is_dir() {
@@ -58,46 +64,58 @@ mod cmd {
         );
 
         sanitized_path.push_str("@");
-        sanitized_path.push_str(&rref);
+        let mut repo_path = sanitized_path.replace('@', ":");
+        repo_path.push_str(&rref);
 
-        Ok(PathBuf::from(sanitized_path))
+        cache_dir.push(repo_path);
+        Ok(PathBuf::from(cache_dir))
     }
 
     async fn run_git_command(dir: &Path, args: &[&str]) -> Result<()> {
-        let child = Command::new("git")
+        let mut child = Command::new("git")
             .current_dir(dir)
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
             .args(args)
             .spawn()?;
 
-        Ok(())
-    }
+        let status = child.status().await?;
+        let output = child.output().await?;
 
-    async fn is_clean(ref_path: &Path) -> Result<bool> {
-        let mut cmd = Command::new("git");
-        cmd.args(&["diff", "--quiet"]);
-        cmd.current_dir(ref_path);
-        cmd.output().await?;
-
-        let result = cmd.status().await?;
-        Ok(result.success())
+        if status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("git command returned error: {}", stderr);
+        }
     }
 
     pub async fn fetch_script(
-        repo: String,
-        rref: String,
-        path: String,
+        repo: &str,
+        rref: &str,
+        path: &str,
         force_fresh: bool,
-    ) -> Result<()> {
-        let ref_path = get_ref_dir(repo, rref).await?;
+    ) -> Result<String> {
+        let mut ref_path = get_ref_dir(repo, rref).await?;
         if force_fresh && ref_path.is_dir() {
             fs::remove_dir_all(&ref_path).await?;
         }
 
-        if !ref_path.is_dir() || !is_clean(&ref_path).await? {
+        let is_clean = ref_path.is_dir()
+            && run_git_command(&ref_path, &["diff", "--quiet"])
+                .await
+                .is_ok();
+
+        if !is_clean {
+            println!("cloning");
+            fs::create_dir_all(&ref_path).await?;
+            run_git_command(&ref_path, &["init"]).await?;
+            run_git_command(&ref_path, &["remote", "add", "origin", repo]).await?;
+            run_git_command(&ref_path, &["fetch", "--depth", "1", "origin", rref]).await?;
+            run_git_command(&ref_path, &["checkout", "FETCH_HEAD"]).await?;
         }
 
-        Ok(())
+        ref_path.push(path);
+        Ok(fs::read_to_string(&ref_path).await?)
     }
 }

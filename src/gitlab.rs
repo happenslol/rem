@@ -18,14 +18,14 @@ struct GitlabRepoResponse {
     id: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GitlabRepo {
     project_id: String,
     path: String,
     token: Option<GitlabToken>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "token_type", content = "token")]
 enum GitlabToken {
     Saved(String),
@@ -41,6 +41,10 @@ impl Repo for GitlabRepo {
 
     fn readable(&self) -> String {
         format!("gitlab.com/{}", &self.path)
+    }
+
+    fn box_clone(&self) -> Box<dyn Repo> {
+        Box::new(self.clone())
     }
 
     async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {

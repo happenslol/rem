@@ -13,6 +13,7 @@ const SHELL_NAME: &'static str = "rem";
 pub trait Repo {
     fn provider(&self) -> &'static str;
     fn readable(&self) -> String;
+    fn box_clone(&self) -> Box<dyn Repo>;
     async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String>;
 }
 

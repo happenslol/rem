@@ -12,20 +12,20 @@ struct GithubFileResponse {
 
 pub const PROVIDER: &'static str = "github";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GithubRepo {
     project_id: String,
     auth: Option<GithubAuth>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "password_type", content = "password")]
 enum GithubPassword {
     Saved(String),
     FromEnv(String),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct GithubAuth {
     username: String,
     password: GithubPassword,
@@ -40,6 +40,10 @@ impl Repo for GithubRepo {
 
     fn readable(&self) -> String {
         format!("github.com/{}", &self.project_id)
+    }
+
+    fn box_clone(&self) -> Box<dyn Repo> {
+        Box::new(self.clone())
     }
 
     async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {

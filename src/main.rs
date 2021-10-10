@@ -21,7 +21,7 @@ lazy_static! {
         Regex::new(r"(?P<alias>^\w+)(@(?P<ref>\w+))?:(?P<script>.+)$").unwrap();
 
     static ref GIT_SOURCE_REGEX: Regex =
-        Regex::new(r"^(?P<repo>((git|ssh|http(s)?)|(git@[\w\.]+))(:(\/\/)?)([\w\./\-~]+)(\.git)?(\/)?)(@(?P<ref>\w+))?:(?P<script>.+)$")
+        Regex::new(r"^(?P<repo>((git|ssh|http(s)?)|(git@[\w\.]+))(:(//)?)([\w\./\-~]+)(\.git)?(/)?)(@(?P<ref>\w+))?:(?P<script>.+)$")
             .unwrap();
 }
 
@@ -202,7 +202,7 @@ enum ScriptAction {
     Import,
 }
 
-struct ScriptSource {
+pub struct ScriptSource {
     repo: String,
     source_type: SourceType,
     script_name: String,
@@ -212,7 +212,7 @@ struct ScriptSource {
 
 enum SourceType {
     Git,
-    Api,
+    Saved,
 }
 
 impl ScriptSource {
@@ -233,7 +233,7 @@ impl ScriptSource {
             let rref = matches.name("ref").map(|rref| rref.as_str().to_owned());
 
             return Ok(Self {
-                source_type: SourceType::Api,
+                source_type: SourceType::Saved,
                 repo,
                 script_name,
                 rref,
@@ -291,19 +291,21 @@ impl ScriptSource {
     }
 
     async fn fetch_script_contents(&self, config: &config::Config) -> Result<String> {
-        match self.source_type {
-            SourceType::Api => {
-                let repo = config
+        let repo = match self.source_type {
+            SourceType::Saved => {
+                config
                     .repo
                     .get(&self.repo)
                     .ok_or(anyhow!("Repo `{}` was not found", &self.repo))?
-                    .clone();
-
-                let rref = self.rref.clone().unwrap_or("HEAD".to_owned());
-                Ok(repo.fetch_script(&self.script_name, &rref).await?)
+                    .box_clone()
             }
-            _ => unimplemented!(),
-        }
+            SourceType::Git => {
+                git::GitRepo::from_src(&self)
+            }
+        };
+
+        let rref = self.rref.clone().unwrap_or("HEAD".to_owned());
+        Ok(repo.fetch_script(&self.script_name, &rref).await?)
     }
 }
 
