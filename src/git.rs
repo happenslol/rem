@@ -74,8 +74,8 @@ mod cmd {
     async fn run_git_command(dir: &Path, args: &[&str]) -> Result<()> {
         let mut child = Command::new("git")
             .current_dir(dir)
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::piped())
             .args(args)
             .spawn()?;
 
@@ -124,7 +124,7 @@ mod cmd {
 
                 if !clone_result.is_ok() {
                     fs::remove_dir_all(&ref_path).await?;
-                    clone_result.context("Failed to clone repo")?;
+                    clone_result?;
                 }
             }
         }
