@@ -926,7 +926,7 @@ checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
 
 [[package]]
 name = "rem-bash"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-process",
@@ -935,6 +935,7 @@ dependencies = [
  "clap",
  "dirs",
  "lazy_static",
+ "openssl-probe",
  "regex",
  "reqwest",
  "sanitize-filename",

@@ -115,6 +115,7 @@ pub enum Password {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    openssl_probe::init_ssl_cert_env_vars();
     let mut config = config::load_config().await?;
 
     match Opts::parse().command {
