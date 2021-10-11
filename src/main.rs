@@ -11,6 +11,7 @@ use std::io::{self, Read};
 use url::Url;
 
 mod config;
+mod git;
 mod github;
 mod gitlab;
 mod repo;
@@ -20,7 +21,7 @@ lazy_static! {
         Regex::new(r"(?P<alias>^\w+)(@(?P<ref>\w+))?:(?P<script>.+)$").unwrap();
 
     static ref GIT_SOURCE_REGEX: Regex =
-        Regex::new(r"^(?P<repo>((git|ssh|http(s)?)|(git@[\w\.]+))(:(\/\/)?)([\w\./\-~]+)(\.git)?(\/)?)(@(?P<ref>\w+))?:(?P<script>.+)$")
+        Regex::new(r"^(?P<repo>((git|ssh|http(s)?)|(git@[\w\.]+))(:(//)?)([\w\./\-~]+)(\.git)?(/)?)(@(?P<ref>\w+))?:(?P<script>.+)$")
             .unwrap();
 }
 
@@ -54,25 +55,22 @@ enum Command {
     },
     /// Run a script using the locally installed bash shell
     Run {
-        #[clap(about = "Script to run")]
-        #[clap(long_about = SCRIPT_HELP)]
+        /// Force a fresh download of the script (only for raw git repositories)
+        #[clap(short, long)]
+        fresh: bool,
+        #[clap(about = "Script to run", long_about = SCRIPT_HELP)]
         script: String,
         /// Args to be passed to the script
         #[clap(about = "Args to be passed to the script")]
         args: Vec<String>,
     },
-    /// Import a script and prints it to stdout
+    /// Import a script and print it to stdout
     Import {
-        #[clap(about = "Script to import")]
-        #[clap(long_about = SCRIPT_HELP)]
+        #[clap(short, long)]
+        fresh: bool,
+        #[clap(about = "Script to import", long_about = SCRIPT_HELP)]
         script: String,
     },
-}
-
-#[derive(Clap, Debug)]
-struct Script {
-    #[clap(long_about = SCRIPT_HELP)]
-    script: String,
 }
 
 #[derive(Clap, Debug)]
@@ -129,7 +127,7 @@ async fn main() -> Result<()> {
 
                 println!("Saved repositories:");
                 for (k, v) in config.repo {
-                    println!("    {} ({}:{})", k, v.provider(), v.uri());
+                    println!("    {} ({} | {})", k, v.provider(), v.readable());
                 }
             }
             RepoCommand::Add {
@@ -155,7 +153,7 @@ async fn main() -> Result<()> {
                     _ => Password::None,
                 };
 
-                let repo = get_repo(&uri, username, password_for_parse).await?;
+                let repo = validate_api_repo(&uri, username, password_for_parse).await?;
                 config.repo.insert(name.clone(), repo);
                 save_config(&config)
                     .await
@@ -176,20 +174,34 @@ async fn main() -> Result<()> {
                 println!("Repo `{}` was removed", &name);
             }
         },
-        Command::Run { script, args } => {
+        Command::Run {
+            script,
+            args,
+            fresh,
+        } => {
             let src = ScriptSource::parse(&script, ScriptAction::Run)?;
             src.validate_script_name(&config)?;
 
-            let contents = src.fetch_script_contents(&config).await?;
+            let contents = src.fetch_script_contents(&config, fresh).await?;
             let args = args.iter().map(|s| &**s).collect();
-            repo::run_script(&contents, args)?;
+
+            // TODO(happens): Find a way to propagate the actual exit code
+            // instead of simply returning 0/1 depending on the script.
+            // This should cover most use cases if you just want to know
+            // if the script failed, but until `std::process::Termination`
+            // is stabilized, it seems unsafe to use `std::process::exit`
+            // since we're using a tokio main.
+            let exit = repo::run_script(&contents, args).await?;
+            if !exit.success() {
+                bail!("");
+            }
         }
-        Command::Import { script } => {
+        Command::Import { script, fresh } => {
             let src = ScriptSource::parse(&script, ScriptAction::Import)?;
             src.validate_script_name(&config)?;
 
-            let contents = src.fetch_script_contents(&config).await?;
-            repo::import_script(&contents)?;
+            let contents = src.fetch_script_contents(&config, fresh).await?;
+            repo::import_script(&contents).await?;
         }
     };
 
@@ -201,7 +213,7 @@ enum ScriptAction {
     Import,
 }
 
-struct ScriptSource {
+pub struct ScriptSource {
     repo: String,
     source_type: SourceType,
     script_name: String,
@@ -211,7 +223,7 @@ struct ScriptSource {
 
 enum SourceType {
     Git,
-    Api,
+    Saved,
 }
 
 impl ScriptSource {
@@ -232,7 +244,7 @@ impl ScriptSource {
             let rref = matches.name("ref").map(|rref| rref.as_str().to_owned());
 
             return Ok(Self {
-                source_type: SourceType::Api,
+                source_type: SourceType::Saved,
                 repo,
                 script_name,
                 rref,
@@ -289,24 +301,22 @@ impl ScriptSource {
         Ok(())
     }
 
-    async fn fetch_script_contents(&self, config: &config::Config) -> Result<String> {
-        match self.source_type {
-            SourceType::Api => {
-                let repo = config
-                    .repo
-                    .get(&self.repo)
-                    .ok_or(anyhow!("Repo `{}` was not found", &self.repo))?
-                    .clone();
+    async fn fetch_script_contents(&self, config: &config::Config, fresh: bool) -> Result<String> {
+        let repo = match self.source_type {
+            SourceType::Saved => config
+                .repo
+                .get(&self.repo)
+                .ok_or(anyhow!("Repo `{}` was not found", &self.repo))?
+                .box_clone(),
+            SourceType::Git => git::GitRepo::from_src(&self),
+        };
 
-                let rref = self.rref.clone().unwrap_or("HEAD".to_owned());
-                Ok(repo.fetch_script(&self.script_name, &rref).await?)
-            }
-            _ => unimplemented!(),
-        }
+        let rref = self.rref.clone().unwrap_or("HEAD".to_owned());
+        Ok(repo.fetch_script(&self.script_name, &rref, fresh).await?)
     }
 }
 
-async fn get_repo(
+async fn validate_api_repo(
     uri: &str,
     username: Option<String>,
     password: Password,

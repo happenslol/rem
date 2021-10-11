@@ -18,13 +18,14 @@ struct GitlabRepoResponse {
     id: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GitlabRepo {
     project_id: String,
+    path: String,
     token: Option<GitlabToken>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "token_type", content = "token")]
 enum GitlabToken {
     Saved(String),
@@ -38,11 +39,15 @@ impl Repo for GitlabRepo {
         PROVIDER
     }
 
-    fn uri(&self) -> &str {
-        &self.project_id
+    fn readable(&self) -> String {
+        format!("gitlab.com/{}", &self.path)
     }
 
-    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
+    fn box_clone(&self) -> Box<dyn Repo> {
+        Box::new(self.clone())
+    }
+
+    async fn fetch_script(&self, path: &str, repo_ref: &str, _fresh: bool) -> Result<String> {
         let script_url = format!(
             "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref={}",
             self.project_id, path, repo_ref,
@@ -104,6 +109,7 @@ pub async fn fetch_project(uri: &Url, token: Password) -> Result<Box<dyn Repo>> 
     let result = GitlabRepo {
         project_id: format!("{}", resp.id),
         token: token_to_save,
+        path: without_leading_slash.to_owned(),
     };
 
     Ok(Box::new(result))

@@ -1,10 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::{
-    fmt::Debug,
-    io::{self, Write},
-    process::Command,
-};
+use async_process::{Command, ExitStatus};
+use std::fmt::Debug;
+use tokio::io::{self, AsyncWriteExt};
 
 const SHELL_NAME: &'static str = "rem";
 
@@ -12,28 +10,28 @@ const SHELL_NAME: &'static str = "rem";
 #[typetag::serde(tag = "provider")]
 pub trait Repo {
     fn provider(&self) -> &'static str;
-    fn uri(&self) -> &str;
-    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String>;
+    fn readable(&self) -> String;
+    fn box_clone(&self) -> Box<dyn Repo>;
+    async fn fetch_script(&self, path: &str, repo_ref: &str, fresh: bool) -> Result<String>;
 }
 
 impl Debug for Box<dyn Repo> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.provider(), self.uri())
+        write!(f, "{} | {}", self.provider(), self.readable())
     }
 }
 
-pub fn run_script(script: &str, script_args: Vec<&str>) -> Result<()> {
+pub async fn run_script(script: &str, script_args: Vec<&str>) -> Result<ExitStatus> {
     let mut cmd = Command::new("bash");
     let mut args = vec!["-c", script, SHELL_NAME];
     args.extend_from_slice(&script_args);
 
     cmd.args(&args);
-    let _child = cmd.spawn()?;
-
-    Ok(())
+    let mut child = cmd.spawn()?;
+    Ok(child.status().await?)
 }
 
-pub fn import_script(script: &str) -> Result<()> {
-    io::stdout().write_all(script.as_bytes())?;
+pub async fn import_script(script: &str) -> Result<()> {
+    io::stdout().write_all(script.as_bytes()).await?;
     Ok(())
 }
