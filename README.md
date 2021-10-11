@@ -29,7 +29,20 @@ rem run ci@v1.2.2:upload-results.sh
 
 ## How to install
 
-`rem` is written in Rust and can be installed using the Cargo package manager.
+You can directly install one of the released binaries:
+
+```bash
+# dynamically linked version
+curl -sLo rem https://github.com/happenslol/rem/releases/download/v0.3.0/rem
+
+# musl version (for alpine, etc.)
+curl -sLo rem https://github.com/happenslol/rem/releases/download/v0.3.0/rem-musl
+
+chmod +x rem
+mv rem /usr/bin
+```
+
+`rem` is written in Rust and can also be installed using the Cargo package manager:
 
 ```bash
 cargo install rem-bash
