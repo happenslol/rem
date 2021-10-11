@@ -46,7 +46,7 @@ impl Repo for GithubRepo {
         Box::new(self.clone())
     }
 
-    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
+    async fn fetch_script(&self, path: &str, repo_ref: &str, _fresh: bool) -> Result<String> {
         let script_url = format!(
             "https://api.github.com/repos/{}/contents/{}?ref={}",
             self.project_id, path, repo_ref,

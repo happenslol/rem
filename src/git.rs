@@ -25,8 +25,8 @@ impl Repo for GitRepo {
         Box::new(self.clone())
     }
 
-    async fn fetch_script(&self, path: &str, rref: &str) -> Result<String> {
-        Ok(cmd::fetch_script(&self.url, rref, path, false).await?)
+    async fn fetch_script(&self, path: &str, rref: &str, fresh: bool) -> Result<String> {
+        Ok(cmd::fetch_script(&self.url, rref, path, fresh).await?)
     }
 }
 
@@ -112,8 +112,8 @@ mod cmd {
         }
 
         {
-            let is_clean_fut = run_git_command(&ref_path, &["diff", "--quiet"]);
-            let is_clean = ref_path.is_dir() && is_clean_fut.await.is_ok();
+            let is_clean = run_git_command(&ref_path, &["diff", "--quiet"]);
+            let is_clean = ref_path.is_dir() && is_clean.await.is_ok();
 
             if !is_clean {
                 fs::create_dir_all(&ref_path)

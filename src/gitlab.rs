@@ -47,7 +47,7 @@ impl Repo for GitlabRepo {
         Box::new(self.clone())
     }
 
-    async fn fetch_script(&self, path: &str, repo_ref: &str) -> Result<String> {
+    async fn fetch_script(&self, path: &str, repo_ref: &str, _fresh: bool) -> Result<String> {
         let script_url = format!(
             "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref={}",
             self.project_id, path, repo_ref,
